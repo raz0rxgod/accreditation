@@ -1,0 +1,111 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: portal_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: portal_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?укажите POSTGRES_PASSWORD в .env}
+      POSTGRES_DB: accreditation
+    ports:
+      # Не публикуем наружу — только с самого сервера (для psql/бэкапов вручную).
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portal_admin -d accreditation"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: portal_redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: portal_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: portal_minio_admin
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?укажите MINIO_ROOT_PASSWORD в .env}
+    ports:
+      # Наружу не публикуем вообще — браузер ходит за файлами через nginx (порт 9443,
+      # см. nginx/nginx.conf), а не напрямую в MinIO. Так и файлы, и сайт на HTTPS
+      # одним и тем же сертификатом, без mixed-content блокировок в браузере.
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: portal_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    env_file:
+      - ./backend/.env
+    ports:
+      # Тоже только для сервера — фронт и браузер ходят в backend через nginx (8443).
+      - "127.0.0.1:3001:3001"
+    # ВАЖНО: bind-mount исходников сюда НЕ добавляем. Dockerfile сам собирает
+    # /app/dist при `docker compose build`; если примонтировать ./backend поверх
+    # /app, соберётся образ, но при старте контейнера собранный dist подменится
+    # хостовыми исходниками без dist — контейнер не запустится. Для разработки
+    # с hot-reload по-прежнему используйте `npm run start:dev` на хосте, не Docker.
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* переменные зашиваются в статическую сборку на этапе build,
+        # поэтому их нужно передать именно как build arg — env_file применяется
+        # только во время выполнения, когда сборка уже готова, и не подействует.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?укажите NEXT_PUBLIC_API_URL в .env}
+    container_name: portal_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    env_file:
+      - ./frontend/.env.local
+    ports:
+      - "127.0.0.1:3000:3000"
+    # Аналогично backend — bind-mount исходников не добавляем, ломает прод-сборку.
+
+  nginx:
+    image: nginx:alpine
+    container_name: portal_nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+      - minio
+    ports:
+      - "80:80"     # редирект на https + ACME-challenge для certbot
+      - "443:443"   # сайт (frontend)
+      - "8443:8443" # backend REST + WebSocket-чат
+      - "9443:9443" # MinIO — подписанные ссылки на файлы/фото/бейджи
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/webroot:/var/www/certbot:ro
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
