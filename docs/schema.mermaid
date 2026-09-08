@@ -1,0 +1,202 @@
+erDiagram
+
+    USERS {
+        uuid id PK
+        string email
+        string password_hash
+        string full_name
+        boolean email_verified
+        datetime created_at
+        datetime updated_at
+    }
+
+    STAFF_USERS {
+        uuid id PK
+        string full_name
+        string email
+        string password_hash
+        enum role "mfa_officer | checkpoint | customs | admin"
+        boolean active
+        datetime created_at
+    }
+
+    MEDIA_ORGANIZATIONS {
+        uuid id PK
+        string name
+        uuid country_id FK
+        string website
+        string registration_number
+        datetime created_at
+    }
+
+    COUNTRIES {
+        uuid id PK
+        string name
+        string iso_code
+    }
+
+    PERSONS {
+        uuid id PK
+        string full_name_normalized
+        string passport_number
+        string email
+        datetime created_at
+        note "мягкая идентичность для 'узнавания' журналиста при повторной подаче"
+    }
+
+    APPLICATIONS {
+        uuid id PK
+        string application_number
+        uuid user_id FK
+        enum status "draft | submitted | in_review | approved | rejected"
+        note "status вычисляется из статусов APPLICANTS, хранится денормализованно для быстрых списков"
+        datetime submitted_at
+        datetime created_at
+    }
+
+    APPLICANTS {
+        uuid id PK
+        uuid application_id FK
+        uuid person_id FK "nullable, проставляется при совпадении"
+        string last_name
+        string first_name
+        string middle_name
+        uuid media_id FK
+        string position
+        string employer_address
+        uuid citizenship_country_id FK
+        boolean visited_before
+        string visit_purpose
+        date trip_start
+        date trip_end
+        string accommodation
+        string phone
+        string email
+        string photo_path
+        string passport_number
+        date passport_expiry
+        boolean visa_free
+        string visa_number
+        date visa_expiry
+        boolean no_press_card
+        date press_card_expiry
+        text prior_coverage_links "необязательное поле при подаче, ссылки на публикации про Абхазию"
+        enum status "new | in_review | approved | rejected"
+        datetime created_at
+    }
+
+    DOCUMENTS {
+        uuid id PK
+        uuid applicant_id FK
+        enum type "accreditation_letter | passport_scan | visa_scan | press_card | media_registration | invitation_letter | equipment_list"
+        string filename
+        string storage_path
+        bigint file_size
+        datetime uploaded_at
+    }
+
+    STATUS_HISTORY {
+        uuid id PK
+        uuid applicant_id FK
+        uuid staff_id FK
+        enum old_status
+        enum new_status
+        text internal_comment "видно только сотрудникам администрации"
+        datetime created_at
+    }
+
+    CHAT_MESSAGES {
+        uuid id PK
+        uuid application_id FK
+        uuid sender_user_id FK
+        uuid sender_staff_id FK
+        text message
+        boolean read
+        datetime created_at
+    }
+
+    ACCREDITATION_CARDS {
+        uuid id PK
+        uuid applicant_id FK
+        string accreditation_number
+        string qr_token
+        date issued_at
+        date expires_at
+        string badge_pdf_path
+        boolean active
+    }
+
+    EQUIPMENT_LISTS {
+        uuid id PK
+        uuid application_id FK
+        string qr_token
+        datetime created_at
+    }
+
+    EQUIPMENT_ITEMS {
+        uuid id PK
+        uuid equipment_list_id FK
+        string category
+        string brand
+        string model
+        string serial_number
+    }
+
+    MATERIALS {
+        uuid id PK
+        uuid applicant_id FK
+        enum type "url | pdf"
+        string url
+        string file_path
+        datetime uploaded_at
+    }
+
+    QR_SCANS {
+        uuid id PK
+        uuid accreditation_card_id FK "nullable"
+        uuid equipment_list_id FK "nullable"
+        uuid scanned_by_staff_id FK
+        string checkpoint_location
+        enum result "valid | expired | not_approved"
+        datetime created_at
+    }
+
+    NOTIFICATIONS {
+        uuid id PK
+        string recipient_email
+        enum type
+        string subject
+        text body
+        enum status "queued | sent | failed"
+        datetime sent_at
+    }
+
+    AUDIT_LOGS {
+        uuid id PK
+        uuid staff_id FK
+        string entity
+        uuid entity_id
+        string action
+        string ip
+        datetime created_at
+    }
+
+    USERS ||--o{ APPLICATIONS : creates
+    APPLICATIONS ||--|{ APPLICANTS : contains
+    APPLICANTS }o--|| MEDIA_ORGANIZATIONS : "works for"
+    APPLICANTS }o--o| PERSONS : "matches"
+    APPLICANTS }o--o| COUNTRIES : "citizenship"
+    MEDIA_ORGANIZATIONS }o--|| COUNTRIES : "based in"
+    APPLICANTS ||--o{ DOCUMENTS : uploads
+    APPLICANTS ||--o{ STATUS_HISTORY : history
+    STAFF_USERS ||--o{ STATUS_HISTORY : changes
+    APPLICATIONS ||--o{ CHAT_MESSAGES : chat
+    USERS ||--o{ CHAT_MESSAGES : writes
+    STAFF_USERS ||--o{ CHAT_MESSAGES : writes
+    APPLICANTS ||--o| ACCREDITATION_CARDS : receives
+    ACCREDITATION_CARDS ||--o{ QR_SCANS : scanned
+    APPLICATIONS ||--o| EQUIPMENT_LISTS : has
+    EQUIPMENT_LISTS ||--|{ EQUIPMENT_ITEMS : contains
+    EQUIPMENT_LISTS ||--o{ QR_SCANS : scanned
+    APPLICANTS ||--o{ MATERIALS : uploads
+    STAFF_USERS ||--o{ AUDIT_LOGS : performs

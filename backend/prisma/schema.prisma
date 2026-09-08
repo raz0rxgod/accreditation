@@ -1,0 +1,383 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Справочники ──────────────────────────────────────────────
+
+model Country {
+  id      String @id @default(uuid())
+  name    String
+  isoCode String @unique @map("iso_code")
+
+  mediaOrganizations MediaOrganization[]
+  applicants         Applicant[]
+
+  @@map("countries")
+}
+
+enum MediaType {
+  television
+  print
+  radio
+  other
+}
+
+model MediaOrganization {
+  id                 String    @id @default(uuid())
+  name               String
+  registrationNumber String?   @map("registration_number")
+  website            String?
+  mediaType          MediaType? @map("media_type")
+  countryId          String?   @map("country_id")
+  country            Country?  @relation(fields: [countryId], references: [id])
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  applicants Applicant[]
+
+  @@map("media_organizations")
+}
+
+// ── Пользователи ─────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  fullName      String   @map("full_name")
+  emailVerified Boolean  @default(false) @map("email_verified")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  applications Application[]
+  chatMessages ChatMessage[]
+  inboxNotifications InboxNotification[]
+
+  @@map("users")
+}
+
+enum StaffRole {
+  mfa_officer
+  checkpoint
+  customs
+  admin
+}
+
+model StaffUser {
+  id           String    @id @default(uuid())
+  fullName     String    @map("full_name")
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  role         StaffRole
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  statusChanges StatusHistory[]
+  chatMessages  ChatMessage[]
+  auditLogs     AuditLog[]
+  qrScans       QrScan[]
+  inboxNotifications InboxNotification[]
+  @@map("staff_users")
+}
+
+// ── Мягкая идентичность журналиста (история обращений) ──────
+
+model Person {
+  id                  String   @id @default(uuid())
+  fullNameNormalized  String   @map("full_name_normalized")
+  passportNumber      String?  @map("passport_number")
+  email               String?
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  applicants Applicant[]
+
+  @@index([fullNameNormalized])
+  @@index([passportNumber])
+  @@map("persons")
+}
+
+// ── Заявки ────────────────────────────────────────────────────
+
+enum ApplicationStatus {
+  draft
+  submitted
+  in_review
+  approved
+  rejected
+}
+
+model Application {
+  id                String            @id @default(uuid())
+  applicationNumber String            @unique @map("application_number")
+  userId            String            @map("user_id")
+  user              User              @relation(fields: [userId], references: [id])
+  status            ApplicationStatus @default(draft)
+  submittedAt       DateTime?         @map("submitted_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  applicants    Applicant[]
+  chatMessages  ChatMessage[]
+  equipmentList EquipmentList?
+
+  @@map("applications")
+}
+
+enum ApplicantStatus {
+  new
+  in_review
+  approved
+  rejected
+}
+
+model Applicant {
+  id                    String          @id @default(uuid())
+  applicationId         String          @map("application_id")
+  application           Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  personId              String?         @map("person_id")
+  person                Person?         @relation(fields: [personId], references: [id])
+
+  lastName              String          @map("last_name")
+  firstName             String          @map("first_name")
+  middleName            String?         @map("middle_name")
+
+  mediaId               String?         @map("media_id")
+  media                 MediaOrganization? @relation(fields: [mediaId], references: [id])
+  position               String?
+
+  employerAddress        String?         @map("employer_address")
+  citizenshipCountryId    String?         @map("citizenship_country_id")
+  citizenshipCountry      Country?        @relation(fields: [citizenshipCountryId], references: [id])
+
+  visitedBefore           Boolean         @default(false) @map("visited_before")
+  visitPurpose            String?         @map("visit_purpose")
+  tripStart                DateTime?       @map("trip_start")
+  tripEnd                  DateTime?       @map("trip_end")
+  accommodation            String?
+
+  phone                    String?
+  email                    String?
+  photoPath                String?         @map("photo_path")
+
+  passportNumber           String?         @map("passport_number")
+  passportExpiry            DateTime?       @map("passport_expiry")
+
+  visaFree                  Boolean         @default(false) @map("visa_free")
+  visaNumber                 String?         @map("visa_number")
+  visaExpiry                  DateTime?       @map("visa_expiry")
+
+  noPressCard                  Boolean         @default(false) @map("no_press_card")
+  pressCardExpiry               DateTime?       @map("press_card_expiry")
+
+  priorCoverageLinks              String?         @map("prior_coverage_links") @db.Text
+
+  status                            ApplicantStatus @default(new)
+  createdAt                          DateTime        @default(now()) @map("created_at")
+
+  documents        Document[]
+  statusHistory    StatusHistory[]
+  accreditationCard AccreditationCard?
+  materials         Material[]
+
+  @@map("applicants")
+}
+
+// ── Документы ─────────────────────────────────────────────────
+
+enum DocumentType {
+  accreditation_letter
+  passport_scan
+  visa_scan
+  press_card
+  media_registration
+  invitation_letter
+  equipment_list_file
+}
+
+model Document {
+  id          String       @id @default(uuid())
+  applicantId String       @map("applicant_id")
+  applicant   Applicant    @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  type        DocumentType
+  filename    String
+  storagePath String       @map("storage_path")
+  fileSize    BigInt       @map("file_size")
+  uploadedAt  DateTime     @default(now()) @map("uploaded_at")
+
+  @@map("documents")
+}
+
+// ── История статусов (с внутренним комментарием) ────────────
+
+model StatusHistory {
+  id              String           @id @default(uuid())
+  applicantId     String           @map("applicant_id")
+  applicant       Applicant        @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  staffId         String?          @map("staff_id")
+  staff           StaffUser?       @relation(fields: [staffId], references: [id])
+  oldStatus       ApplicantStatus? @map("old_status")
+  newStatus       ApplicantStatus  @map("new_status")
+  internalComment String?          @map("internal_comment") @db.Text
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  @@map("status_history")
+}
+
+// ── Чат внутри заявки ─────────────────────────────────────────
+
+model ChatMessage {
+  id            String       @id @default(uuid())
+  applicationId String       @map("application_id")
+  application   Application  @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  senderUserId  String?      @map("sender_user_id")
+  senderUser    User?        @relation(fields: [senderUserId], references: [id])
+  senderStaffId String?      @map("sender_staff_id")
+  senderStaff   StaffUser?   @relation(fields: [senderStaffId], references: [id])
+  message       String       @db.Text
+  read          Boolean      @default(false)
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  @@map("chat_messages")
+}
+
+// ── Аккредитационные карты и QR ─────────────────────────────
+
+model AccreditationCard {
+  id                  String    @id @default(uuid())
+  applicantId         String    @unique @map("applicant_id")
+  applicant           Applicant @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  accreditationNumber String    @unique @map("accreditation_number")
+  qrToken             String    @unique @map("qr_token")
+  issuedAt            DateTime  @map("issued_at")
+  expiresAt           DateTime  @map("expires_at")
+  badgePdfPath        String?   @map("badge_pdf_path")
+  active              Boolean   @default(true)
+
+  qrScans QrScan[]
+
+  @@map("accreditation_cards")
+}
+
+model EquipmentList {
+  id            String      @id @default(uuid())
+  applicationId String      @unique @map("application_id")
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  qrToken       String      @unique @map("qr_token")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  items   EquipmentItem[]
+  qrScans QrScan[]
+
+  @@map("equipment_lists")
+}
+
+model EquipmentItem {
+  id              String        @id @default(uuid())
+  equipmentListId String        @map("equipment_list_id")
+  equipmentList   EquipmentList @relation(fields: [equipmentListId], references: [id], onDelete: Cascade)
+  category        String
+  brand           String
+  model           String
+  serialNumber    String        @map("serial_number")
+
+  @@map("equipment_items")
+}
+
+enum QrScanResult {
+  valid
+  expired
+  not_approved
+}
+
+model QrScan {
+  id                  String             @id @default(uuid())
+  accreditationCardId String?            @map("accreditation_card_id")
+  accreditationCard   AccreditationCard? @relation(fields: [accreditationCardId], references: [id])
+  equipmentListId     String?            @map("equipment_list_id")
+  equipmentList       EquipmentList?     @relation(fields: [equipmentListId], references: [id])
+  scannedByStaffId    String?            @map("scanned_by_staff_id")
+  scannedByStaff      StaffUser?         @relation(fields: [scannedByStaffId], references: [id])
+  checkpointLocation  String?            @map("checkpoint_location")
+  result              QrScanResult
+  createdAt           DateTime           @default(now()) @map("created_at")
+
+  @@map("qr_scans")
+}
+
+// ── Материалы после поездки ──────────────────────────────────
+
+enum MaterialType {
+  url
+  pdf
+}
+
+model Material {
+  id          String       @id @default(uuid())
+  applicantId String       @map("applicant_id")
+  applicant   Applicant    @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  type        MaterialType
+  url         String?
+  filePath    String?      @map("file_path")
+  uploadedAt  DateTime     @default(now()) @map("uploaded_at")
+
+  @@map("materials")
+}
+
+// ── Уведомления и аудит ──────────────────────────────────────
+
+enum NotificationStatus {
+  queued
+  sent
+  failed
+}
+
+model Notification {
+  id             String             @id @default(uuid())
+  recipientEmail String             @map("recipient_email")
+  type           String
+  subject        String
+  body           String             @db.Text
+  status         NotificationStatus @default(queued)
+  sentAt         DateTime?          @map("sent_at")
+
+  @@map("notifications")
+}
+// ── In-app уведомления (колокольчик) ────────────────────────────
+// Отдельная сущность от Notification выше: та — очередь на отправку email,
+// эта — лента для UI (список + непрочитанные), доставляется ещё и через
+// WebSocket 'notifications' namespace в реальном времени.
+model InboxNotification {
+  id      String @id @default(uuid())
+  type    String // 'chat_message' | 'status_changed'
+  title   String
+  body    String @db.Text
+  link    String? // относительный путь на фронте, куда ведёт клик по уведомлению
+
+  recipientUserId  String?    @map("recipient_user_id")
+  recipientUser    User?      @relation(fields: [recipientUserId], references: [id])
+  recipientStaffId String?    @map("recipient_staff_id")
+  recipientStaff   StaffUser? @relation(fields: [recipientStaffId], references: [id])
+
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([recipientUserId, read])
+  @@index([recipientStaffId, read])
+  @@map("inbox_notifications")
+}
+model AuditLog {
+  id        String     @id @default(uuid())
+  staffId   String?    @map("staff_id")
+  staff     StaffUser? @relation(fields: [staffId], references: [id])
+  entity    String
+  entityId  String     @map("entity_id")
+  action    String
+  ip        String?
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  @@map("audit_logs")
+}
